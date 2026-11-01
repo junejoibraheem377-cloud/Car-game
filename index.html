@@ -5,142 +5,448 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Highway Rush</title>
 <style>
-  html, body { margin:0; height:100%; background:#111; overflow:hidden; }
+  html, body { margin:0; height:100%; background:#111; overflow:hidden;
+    touch-action:none; user-select:none; -webkit-user-select:none; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 <body>
 <script>
 const W = 400, H = 700;
-const LANES = 4;
-const ROAD_W = 320;
-const LANE_W = ROAD_W / LANES;
+const LANES = 4, ROAD_W = 260, CURB = 10;
+const LANE_W = (ROAD_W - CURB * 2) / LANES;
 const ROAD_X = (W - ROAD_W) / 2;
-const laneX = i => ROAD_X + LANE_W * i + LANE_W / 2;
+const laneX = i => ROAD_X + CURB + LANE_W * i + LANE_W / 2;
+const MIN_X = ROAD_X + CURB + 22;
+const MAX_X = ROAD_X + ROAD_W - CURB - 22;
+const CAR_Y = H - 230;
+const rnd = (a, b) => Phaser.Math.Between(a, b);
 
-// Car ki texture banana (sirf ek dafa)
-function makeCar(scene, key, color) {
+const SCENERY = {
+  tree:{w:56,h:56}, pine:{w:44,h:44}, flowers:{w:40,h:40},
+  hill:{w:110,h:90}, house:{w:70,h:70}, restaurant:{w:100,h:80}
+};
+const ENEMY_COLORS = [0x1d8cf8, 0xf4a261, 0x8d99ae, 0x2ecc71, 0x9b59b6, 0xf1c40f];
+
+function makeTex(scene, key, w, h, draw) {
   if (scene.textures.exists(key)) return;
   const g = scene.add.graphics();
-  g.fillStyle(color).fillRoundedRect(0, 0, 40, 70, 8);
-  g.fillStyle(0x9ad1ff).fillRect(6, 14, 28, 16);
-  g.fillRect(6, 46, 28, 12);
-  g.generateTexture(key, 40, 70);
+  draw(g);
+  g.generateTexture(key, w, h);
   g.destroy();
 }
 
-// Sadak ki texture banana (sirf ek dafa)
-function makeRoad(scene) {
-  if (scene.textures.exists("road")) return;
-  const g = scene.add.graphics();
-  g.fillStyle(0x333333).fillRect(0, 0, ROAD_W, 200);
-  g.fillStyle(0xffffff);
-  for (let i = 1; i < LANES; i++) g.fillRect(i * LANE_W - 2, 20, 4, 80);
-  g.fillRect(0, 0, 6, 200);
-  g.fillRect(ROAD_W - 6, 0, 6, 200);
-  g.generateTexture("road", ROAD_W, 200);
-  g.destroy();
+function drawCar(g, color, stripe) {
+  const dark  = Phaser.Display.Color.ValueToColor(color).darken(35).color;
+  const light = Phaser.Display.Color.ValueToColor(color).lighten(25).color;
+  g.fillStyle(0x000000, 0.28).fillRoundedRect(5, 7, 38, 76, 11);
+  g.fillStyle(0x111111);
+  g.fillRoundedRect(0, 14, 7, 17, 2); g.fillRoundedRect(37, 14, 7, 17, 2);
+  g.fillRoundedRect(0, 54, 7, 17, 2); g.fillRoundedRect(37, 54, 7, 17, 2);
+  g.fillStyle(color).fillRoundedRect(3, 2, 38, 78, 11);
+  g.fillStyle(light).fillRoundedRect(8, 6, 28, 16, 6);
+  g.fillStyle(dark).fillRoundedRect(8, 60, 28, 16, 6);
+  if (stripe) { g.fillStyle(0xffffff, 0.9); g.fillRect(19, 3, 2, 76); g.fillRect(23, 3, 2, 76); }
+  g.fillStyle(0x7fc8f8).fillRoundedRect(9, 24, 26, 15, 4);
+  g.fillStyle(dark).fillRoundedRect(10, 39, 24, 15, 3);
+  g.fillStyle(0x6bb5e8).fillRoundedRect(9, 54, 26, 8, 3);
+  g.fillStyle(0xfff6b0).fillRect(7, 3, 8, 4); g.fillRect(29, 3, 8, 4);
+  g.fillStyle(0xff2a2a).fillRect(7, 76, 8, 3); g.fillRect(29, 76, 8, 3);
+  g.fillStyle(dark).fillRect(1, 30, 4, 6); g.fillRect(39, 30, 4, 6);
+}
+
+function drawTruck(g, color) {
+  g.fillStyle(0x000000, 0.28).fillRoundedRect(5, 7, 42, 114, 6);
+  g.fillStyle(0x111111);
+  [[0,12],[43,12],[0,70],[43,70],[0,92],[43,92]].forEach(p => g.fillRoundedRect(p[0], p[1], 7, 17, 2));
+  g.fillStyle(0xe8ecef).fillRoundedRect(3, 36, 42, 84, 4);
+  g.fillStyle(0xc5ccd1).fillRect(3, 36, 42, 5);
+  g.fillStyle(0xb0b8bd).fillRect(23, 41, 2, 78);
+  g.fillStyle(color).fillRoundedRect(4, 2, 40, 36, 8);
+  g.fillStyle(0x7fc8f8).fillRoundedRect(9, 10, 30, 12, 3);
+  g.fillStyle(0xfff6b0).fillRect(7, 3, 8, 4); g.fillRect(33, 3, 8, 4);
+  g.fillStyle(0xff2a2a).fillRect(6, 117, 10, 3); g.fillRect(32, 117, 10, 3);
+}
+
+function buildTextures(s) {
+  makeTex(s, "grass", 128, 128, g => {
+    g.fillStyle(0x3d8f3a).fillRect(0, 0, 128, 128);
+    const cols = [0x3a8737, 0x43973f, 0x368033];
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle(cols[rnd(0, 2)]).fillRect(rnd(0, 126), rnd(0, 126), rnd(2, 6), rnd(2, 6));
+    }
+  });
+
+  makeTex(s, "road", ROAD_W, 200, g => {
+    g.fillStyle(0x3a3a3c).fillRect(0, 0, ROAD_W, 200);
+    for (let i = 0; i < 140; i++) {
+      g.fillStyle(i % 2 ? 0x444446 : 0x323234).fillRect(rnd(0, ROAD_W - 3), rnd(0, 197), rnd(1, 3), rnd(1, 3));
+    }
+    for (let y = 0; y < 200; y += 20) {
+      g.fillStyle((y / 20) % 2 ? 0xffffff : 0xd62828);
+      g.fillRect(0, y, CURB, 20); g.fillRect(ROAD_W - CURB, y, CURB, 20);
+    }
+    g.fillStyle(0xffffff).fillRect(CURB + 2, 0, 2, 200).fillRect(ROAD_W - CURB - 4, 0, 2, 200);
+    for (let i = 1; i < LANES; i++) {
+      const x = CURB + LANE_W * i;
+      if (i === 2) {
+        g.fillStyle(0xf1c40f).fillRect(x - 4, 0, 3, 200).fillRect(x + 1, 0, 3, 200);
+      } else {
+        g.fillStyle(0xffffff);
+        for (let y = 0; y < 200; y += 100) g.fillRect(x - 1, y + 10, 3, 50);
+      }
+    }
+  });
+
+  makeTex(s, "player", 44, 84, g => drawCar(g, 0xd62839, true));
+  ENEMY_COLORS.forEach((c, i) => makeTex(s, "e" + i, 44, 84, g => drawCar(g, c, false)));
+  makeTex(s, "truck0", 52, 124, g => drawTruck(g, 0xc0392b));
+  makeTex(s, "truck1", 52, 124, g => drawTruck(g, 0x2980b9));
+
+  makeTex(s, "glow", 44, 12, g => {
+    g.fillStyle(0xff0000, 0.25).fillRoundedRect(0, 0, 44, 12, 5);
+    g.fillStyle(0xff2a2a, 0.8).fillRoundedRect(4, 3, 14, 6, 3).fillRoundedRect(26, 3, 14, 6, 3);
+  });
+
+  // ASLI PEDALS aur STEERING WHEEL
+  makeTex(s, "pedalGas", 56, 96, g => {
+    g.fillStyle(0x000000, 0.35).fillRoundedRect(5, 8, 50, 86, 10);
+    g.fillStyle(0x8a8f94).fillRoundedRect(23, 0, 10, 14, 3);
+    g.fillStyle(0x1c1c1e).fillRoundedRect(2, 10, 50, 84, 10);
+    g.fillStyle(0x0d0d0e);
+    for (let y = 40; y < 86; y += 9) g.fillRect(9, y, 36, 4);
+    g.lineStyle(2, 0x9aa0a6, 1).strokeRoundedRect(2, 10, 50, 84, 10);
+  });
+
+  makeTex(s, "pedalBrake", 72, 80, g => {
+    g.fillStyle(0x000000, 0.35).fillRoundedRect(5, 8, 66, 70, 10);
+    g.fillStyle(0x8a8f94).fillRoundedRect(30, 0, 12, 12, 3);
+    g.fillStyle(0x1c1c1e).fillRoundedRect(2, 10, 66, 68, 10);
+    g.fillStyle(0x0d0d0e);
+    for (let y = 36; y < 72; y += 9) g.fillRect(9, y, 52, 4);
+    g.lineStyle(2, 0x9aa0a6, 1).strokeRoundedRect(2, 10, 66, 68, 10);
+  });
+
+  makeTex(s, "wheel", 120, 120, g => {
+    g.fillStyle(0x2a2a2d).fillRect(12, 56, 96, 9);
+    g.fillRect(56, 60, 9, 48);
+    g.lineStyle(14, 0x1c1c1e, 1).strokeCircle(60, 60, 48);
+    g.lineStyle(2, 0x6b7076, 1).strokeCircle(60, 60, 55);
+    g.fillStyle(0x3a3a3d).fillCircle(60, 60, 17);
+    g.fillStyle(0xd62839).fillCircle(60, 60, 6);
+    g.fillStyle(0xffd166).fillRect(57, 6, 6, 15);
+  });
+
+  makeTex(s, "tree", 56, 56, g => {
+    g.fillStyle(0x000000, 0.25).fillEllipse(32, 32, 50, 50);
+    g.fillStyle(0x1e6b2a).fillCircle(28, 28, 26);
+    g.fillStyle(0x2a8a38).fillCircle(26, 26, 19);
+    g.fillStyle(0x3fae4d).fillCircle(23, 23, 11);
+  });
+
+  makeTex(s, "pine", 44, 44, g => {
+    g.fillStyle(0x14532d).fillCircle(22, 22, 20);
+    g.fillStyle(0x1e6b3a).fillCircle(21, 21, 14);
+    g.fillStyle(0x2f8f4e).fillCircle(20, 20, 6);
+  });
+
+  makeTex(s, "flowers", 40, 40, g => {
+    g.fillStyle(0x2f7d32, 0.9).fillCircle(20, 20, 17);
+    const fc = [0xff4d6d, 0xffd166, 0xffffff, 0xff9f1c, 0xc77dff];
+    for (let i = 0; i < 16; i++) g.fillStyle(fc[rnd(0, 4)]).fillCircle(rnd(8, 32), rnd(8, 32), rnd(2, 3));
+  });
+
+  makeTex(s, "hill", 110, 90, g => {
+    g.fillStyle(0x000000, 0.2).fillEllipse(60, 50, 108, 84);
+    g.fillStyle(0x2a6f2f).fillEllipse(55, 45, 108, 86);
+    g.fillStyle(0x348a3a).fillEllipse(50, 40, 84, 66);
+    g.fillStyle(0x3fa346).fillEllipse(46, 36, 56, 44);
+    g.fillStyle(0x52bd5a).fillEllipse(42, 32, 28, 22);
+  });
+
+  makeTex(s, "house", 70, 70, g => {
+    g.fillStyle(0x000000, 0.25).fillRect(10, 10, 58, 58);
+    g.fillStyle(0xa93226).fillRect(6, 6, 29, 58);
+    g.fillStyle(0xc0392b).fillRect(35, 6, 29, 58);
+    g.fillStyle(0x7b241c).fillRect(33, 6, 4, 58);
+    g.fillStyle(0x555555).fillRect(46, 14, 8, 8);
+  });
+
+  makeTex(s, "restaurant", 100, 80, g => {
+    g.fillStyle(0x555555).fillRect(0, 0, 100, 80);
+    g.fillStyle(0xf5e6c8).fillRect(6, 4, 88, 44);
+    g.fillStyle(0xb03a2e).fillRect(8, 6, 84, 40);
+    g.fillStyle(0x8e2b21).fillRect(8, 24, 84, 3);
+    g.fillStyle(0x1b1b1b).fillRect(16, 18, 68, 16);
+    g.fillStyle(0xffffff);
+    for (let x = 8; x <= 88; x += 20) g.fillRect(x, 54, 2, 22);
+    const pc = [0x1d8cf8, 0xf4a261, 0x2ecc71];
+    for (let i = 0; i < 3; i++) g.fillStyle(pc[i]).fillRoundedRect(12 + i * 20, 56, 14, 20, 3);
+  });
+
+  makeTex(s, "lamp", 16, 16, g => {
+    g.fillStyle(0xfff3b0, 0.35).fillCircle(8, 8, 8);
+    g.fillStyle(0x555555).fillCircle(8, 8, 3.5);
+    g.fillStyle(0xfff3b0).fillCircle(8, 8, 2);
+  });
 }
 
 class GameScene extends Phaser.Scene {
   constructor() { super("Game"); }
 
   create() {
-    this.speed = 6;
-    this.lane = 1;
+    buildTextures(this);
+
+    this.speed = 5;
+    this.maxSpeed = 10;
+    this.level = 1;
+    this.dist = 0;
+    this.overtakes = 0;
     this.score = 0;
     this.isOver = false;
     this.canRestart = false;
     this.enemies = [];
+    this.scenery = [];
+    this.spawnCtr = 0;
+    this.sceneryCtr = 0;
+    this.lampCtr = 0;
 
-    makeRoad(this);
-    makeCar(this, "car", 0xe63946);
-    makeCar(this, "t0", 0x1d8cf8);
-    makeCar(this, "t1", 0xf4a261);
-    makeCar(this, "t2", 0x8d99ae);
+    this.grass = this.add.tileSprite(W / 2, H / 2, W, H, "grass").setDepth(0);
+    this.road  = this.add.tileSprite(W / 2, H / 2, ROAD_W, H, "road").setDepth(1);
 
-    this.cameras.main.setBackgroundColor(0x2d6a2d);
-    this.road = this.add.tileSprite(W / 2, H / 2, ROAD_W, H, "road");
-    this.car = this.add.image(laneX(this.lane), H - 120, "car");
+    for (let y = 20; y < H; y += 110) this.spawnScenery(y);
+    for (let y = 30; y < H; y += 220) this.spawnLamps(y);
 
-    this.scoreText = this.add.text(12, 10, "Score: 0", {
-      fontFamily: "Arial", fontSize: "24px", color: "#ffffff"
-    }).setDepth(10);
+    // Player car
+    const body = this.add.image(0, 0, "player");
+    this.glow = this.add.image(0, 44, "glow").setVisible(false);
+    this.car = this.add.container(laneX(1), CAR_Y, [body, this.glow]).setDepth(6);
 
-    // Har 0.9 second baad ek traffic car
-    this.time.addEvent({
-      delay: 900, loop: true,
-      callback: this.spawnEnemy, callbackScope: this
+    // HUD
+    this.add.rectangle(W / 2, 22, W, 44, 0x000000, 0.5).setDepth(19);
+    const hud = { fontFamily: "Arial", fontStyle: "bold", fontSize: "18px", color: "#ffffff" };
+    this.scoreText = this.add.text(12, 11, "Score 0", hud).setDepth(20);
+    this.levelText = this.add.text(W / 2, 11, "LEVEL 1", { ...hud, color: "#ffd166" }).setOrigin(0.5, 0).setDepth(20);
+    this.speedText = this.add.text(W - 12, 11, "0 km/h", hud).setOrigin(1, 0).setDepth(20);
+
+    // Steering wheel aur asli pedals
+    this.wheelPos = { x: 80, y: H - 70, r: 75 };
+    this.wheel = this.add.image(80, H - 70, "wheel").setDepth(15).setAlpha(0.95);
+    this.pedalBrake = this.add.image(272, H - 56, "pedalBrake").setDepth(15);
+    this.pedalGas   = this.add.image(356, H - 60, "pedalGas").setDepth(15);
+    const lab = { fontFamily: "Arial", fontStyle: "bold", fontSize: "11px", color: "#cfd3d7" };
+    this.add.text(272, H - 72, "BRAKE", lab).setOrigin(0.5).setDepth(16);
+    this.add.text(356, H - 82, "GAS", lab).setOrigin(0.5).setDepth(16);
+    this.btns = [
+      { name: "brake", x: 272, y: H - 56, hw: 46, hh: 50 },
+      { name: "gas",   x: 356, y: H - 60, hw: 38, hh: 58 }
+    ];
+
+    // Keyboard
+    this.cursors = this.input.keyboard.createCursorKeys();
+    this.wasd = this.input.keyboard.addKeys("W,A,S,D");
+    this.spaceKey = this.input.keyboard.addKey("SPACE");
+
+    this.input.on("pointerdown", () => {
+      if (this.isOver && this.canRestart) this.scene.restart();
     });
 
-    // Controls
-    this.input.keyboard.on("keydown-LEFT",  () => this.moveLane(-1));
-    this.input.keyboard.on("keydown-RIGHT", () => this.moveLane(1));
-    this.input.keyboard.on("keydown-SPACE", () => this.tryRestart());
-    this.input.on("pointerdown", p => {
-      if (this.isOver) { this.tryRestart(); return; }
-      this.moveLane(p.x < this.scale.width / 2 ? -1 : 1);
-    });
+    this.showBanner("LEVEL 1");
   }
 
-  moveLane(dir) {
-    if (this.isOver) return;
-    const newLane = Phaser.Math.Clamp(this.lane + dir, 0, LANES - 1);
-    if (newLane === this.lane) return;
-    this.lane = newLane;
-    this.tweens.add({ targets: this.car, x: laneX(newLane), duration: 120 });
+  readTouch() {
+    const t = { steer: 0, gas: false, brake: false };
+    const w = this.wheelPos;
+    this.input.manager.pointers.forEach(p => {
+      if (!p.isDown) return;
+      if (Phaser.Math.Distance.Between(p.x, p.y, w.x, w.y) <= w.r) {
+        const v = Phaser.Math.Clamp((p.x - w.x) / 45, -1, 1);
+        t.steer = Math.abs(v) < 0.12 ? 0 : v;
+      }
+      this.btns.forEach(b => {
+        if (Math.abs(p.x - b.x) <= b.hw && Math.abs(p.y - b.y) <= b.hh) t[b.name] = true;
+      });
+    });
+    return t;
+  }
+
+  showBanner(msg) {
+    const t = this.add.text(W / 2, 150, msg, {
+      fontFamily: "Arial", fontStyle: "bold", fontSize: "44px",
+      color: "#ffd166", stroke: "#000000", strokeThickness: 6
+    }).setOrigin(0.5).setDepth(25);
+    this.tweens.add({ targets: t, alpha: 0, y: 110, duration: 1800, delay: 400, onComplete: () => t.destroy() });
+  }
+
+  spawnScenery(yPos) {
+    const r = Math.random();
+    const type = r < 0.30 ? "tree" : r < 0.50 ? "pine" : r < 0.70 ? "flowers"
+               : r < 0.82 ? "hill" : r < 0.92 ? "house" : "restaurant";
+    const s = SCENERY[type];
+    const maxC = Math.round(ROAD_X - 8 - s.w / 2);
+    const minC = Math.round(-s.w / 4);
+    let x = rnd(minC, maxC);
+    if (Math.random() < 0.5) x = W - x;
+    const y = yPos === undefined ? -s.h : yPos;
+    let obj;
+    if (type === "restaurant") {
+      const img = this.add.image(0, 0, "restaurant");
+      const label = this.add.text(0, -14, "RESTAURANT", {
+        fontFamily: "Arial", fontStyle: "bold", fontSize: "11px", color: "#ffd166"
+      }).setOrigin(0.5);
+      obj = this.add.container(x, y, [img, label]);
+    } else {
+      obj = this.add.image(x, y, type);
+    }
+    obj.setDepth(2);
+    obj.h = s.h;
+    this.scenery.push(obj);
+  }
+
+  spawnLamps(yPos) {
+    const y = yPos === undefined ? -20 : yPos;
+    [ROAD_X - 6, ROAD_X + ROAD_W + 6].forEach(x => {
+      const l = this.add.image(x, y, "lamp").setDepth(3);
+      l.h = 16;
+      this.scenery.push(l);
+    });
   }
 
   spawnEnemy() {
-    if (this.isOver) return;
-    const lane = Phaser.Math.Between(0, LANES - 1);
-    // Agar usi lane mein upar pehle se car ho to skip
-    if (this.enemies.some(e => e.lane === lane && e.y < 200)) return;
-    const key = Phaser.Utils.Array.GetRandom(["t0", "t1", "t2"]);
-    const e = this.add.image(laneX(lane), -60, key);
+    const busy = new Set(this.enemies.filter(e => e.y < 180 && e.y > -200).map(e => e.lane));
+    const free = [0, 1, 2, 3].filter(l => !busy.has(l));
+    if (free.length < 2) return;
+    const lane = Phaser.Utils.Array.GetRandom(free);
+    const lv = this.level - 1;
+    let e;
+    if (Math.random() < 0.15) {
+      e = this.add.image(laneX(lane), -90, "truck" + rnd(0, 1));
+      e.hw = 24; e.hh = 60;
+      e.v = Phaser.Math.FloatBetween(2.8, 3.8) + lv * 0.2;
+    } else {
+      e = this.add.image(laneX(lane), -70, "e" + rnd(0, ENEMY_COLORS.length - 1));
+      e.hw = 19; e.hh = 38;
+      e.v = Phaser.Math.FloatBetween(3.5, 6) + lv * 0.4;
+    }
     e.lane = lane;
+    e.setDepth(5);
     this.enemies.push(e);
   }
 
   crash() {
     this.isOver = true;
-    this.cameras.main.shake(300, 0.01);
-    const style = { fontFamily: "Arial", color: "#ffffff", align: "center" };
-    this.add.text(W / 2, H / 2 - 40, "GAME OVER", { ...style, fontSize: "44px" })
-      .setOrigin(0.5).setDepth(10);
-    this.add.text(W / 2, H / 2 + 20, "Score: " + this.score, { ...style, fontSize: "28px" })
-      .setOrigin(0.5).setDepth(10);
-    this.add.text(W / 2, H / 2 + 70, "Tap karo dobara khelne ke liye", { ...style, fontSize: "20px" })
-      .setOrigin(0.5).setDepth(10);
-    this.time.delayedCall(600, () => { this.canRestart = true; });
+    this.speed = 0;
+    this.glow.setVisible(true);
+    this.cameras.main.shake(350, 0.012);
+    this.cameras.main.flash(250, 255, 60, 60);
+
+    let best = 0;
+    try { best = Number(localStorage.getItem("hr_best")) || 0; } catch (e) {}
+    const isNew = this.score > best;
+    if (isNew) {
+      best = this.score;
+      try { localStorage.setItem("hr_best", best); } catch (e) {}
+    }
+
+    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setDepth(30);
+    const st = { fontFamily: "Arial", fontStyle: "bold", color: "#ffffff", align: "center", stroke: "#000000", strokeThickness: 4 };
+    this.add.text(W / 2, 220, "CRASH!", { ...st, fontSize: "52px", color: "#ff5252" }).setOrigin(0.5).setDepth(31);
+    this.add.text(W / 2, 300, "Score: " + this.score, { ...st, fontSize: "30px" }).setOrigin(0.5).setDepth(31);
+    this.add.text(W / 2, 345, (isNew ? "New best: " : "Best: ") + best, { ...st, fontSize: "22px", color: "#ffd166" }).setOrigin(0.5).setDepth(31);
+    this.add.text(W / 2, 395, "Level " + this.level, { ...st, fontSize: "22px" }).setOrigin(0.5).setDepth(31);
+    this.add.text(W / 2, 460, "Dobara khelne ke liye\ntap karo ya Space dabao", { ...st, fontSize: "20px" }).setOrigin(0.5).setDepth(31);
+
+    this.time.delayedCall(500, () => { this.canRestart = true; });
   }
 
-  tryRestart() {
-    if (this.isOver && this.canRestart) this.scene.restart();
-  }
+  update(time, delta) {
+    if (this.isOver) {
+      if (this.canRestart && Phaser.Input.Keyboard.JustDown(this.spaceKey)) this.scene.restart();
+      return;
+    }
+    const dt = Math.min(delta, 50) / 16.667;
+    const t = this.readTouch();
 
-  update() {
-    if (this.isOver) return;
-    this.road.tilePositionY -= this.speed;
+    const kLeft  = this.cursors.left.isDown  || this.wasd.A.isDown;
+    const kRight = this.cursors.right.isDown || this.wasd.D.isDown;
+    const gas    = this.cursors.up.isDown    || this.wasd.W.isDown || t.gas;
+    const brake  = this.cursors.down.isDown  || this.wasd.S.isDown || t.brake;
+    let steer = (kRight ? 1 : 0) - (kLeft ? 1 : 0);
+    if (t.steer !== 0) steer = t.steer;
 
+    // Wheel aur pedals ka animation
+    this.wheel.angle += (steer * 90 - this.wheel.angle) * 0.25 * dt;
+    this.pedalGas.setScale(gas ? 0.9 : 1);
+    this.pedalBrake.setScale(brake ? 0.9 : 1);
+    if (gas) this.pedalGas.setTint(0xbbbbbb); else this.pedalGas.clearTint();
+    if (brake) this.pedalBrake.setTint(0xbbbbbb); else this.pedalBrake.clearTint();
+
+    // Speed: gas, brake aur coasting
+    if (gas) this.speed += 0.12 * dt;
+    else if (!brake) this.speed -= 0.03 * dt;
+    if (brake) this.speed -= 0.35 * dt;
+    this.speed = Phaser.Math.Clamp(this.speed, 0, this.maxSpeed);
+    this.glow.setVisible(brake && this.speed > 0.2);
+
+    // Steering
+    const grip = Math.min(1, this.speed / 1.5);
+    const sSpeed = (1.5 + Math.min(this.speed, 10) * 0.35) * grip * dt;
+    this.car.x = Phaser.Math.Clamp(this.car.x + steer * sSpeed, MIN_X, MAX_X);
+    this.car.angle += (steer * 7 * grip - this.car.angle) * 0.2 * dt;
+
+    // Distance aur level
+    this.dist += this.speed * dt;
+    const meters = Math.floor(this.dist / 40);
+    const lvl = 1 + Math.floor(meters / 500);
+    if (lvl > this.level) {
+      this.level = lvl;
+      this.maxSpeed = Math.min(10 + (lvl - 1) * 1.3, 19);
+      this.levelText.setText("LEVEL " + lvl);
+      this.showBanner("LEVEL " + lvl);
+    }
+
+    // Scrolling
+    this.grass.tilePositionY -= this.speed * dt;
+    this.road.tilePositionY  -= this.speed * dt;
+
+    // Spawning
+    this.spawnCtr += this.speed * dt;
+    const gap = Math.max(150, 300 - (this.level - 1) * 25);
+    if (this.spawnCtr > gap) { this.spawnCtr = 0; this.spawnEnemy(); }
+
+    this.sceneryCtr += this.speed * dt;
+    if (this.sceneryCtr > 120) {
+      this.sceneryCtr = 0;
+      this.spawnScenery();
+      if (Math.random() < 0.6) this.spawnScenery();
+    }
+
+    this.lampCtr += this.speed * dt;
+    if (this.lampCtr > 200) { this.lampCtr = 0; this.spawnLamps(); }
+
+    // Scenery move
+    for (let i = this.scenery.length - 1; i >= 0; i--) {
+      const o = this.scenery[i];
+      o.y += this.speed * dt;
+      if (o.y > H + o.h) { o.destroy(); this.scenery.splice(i, 1); }
+    }
+
+    // Traffic move + crash check
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
-      e.y += this.speed - 2; // traffic dheere chalta hai
-
-      // Takkar check
-      if (Math.abs(e.x - this.car.x) < 34 && Math.abs(e.y - this.car.y) < 64) {
+      e.y += (this.speed - e.v) * dt;
+      if (Math.abs(e.x - this.car.x) < e.hw + 16 && Math.abs(e.y - this.car.y) < e.hh + 34) {
         this.crash();
         return;
       }
-
-      // Car peeche nikal gayi: score barhao
-      if (e.y > H + 80) {
-        e.destroy();
-        this.enemies.splice(i, 1);
-        this.score += 10;
-        this.scoreText.setText("Score: " + this.score);
-      }
+      if (e.y > H + 100) { e.destroy(); this.enemies.splice(i, 1); this.overtakes++; }
+      else if (e.y < -320) { e.destroy(); this.enemies.splice(i, 1); }
     }
+
+    // HUD
+    this.score = meters + this.overtakes * 10;
+    this.scoreText.setText("Score " + this.score);
+    this.speedText.setText(Math.round(this.speed * 12) + " km/h");
   }
 }
 
@@ -149,6 +455,8 @@ new Phaser.Game({
   width: W,
   height: H,
   scene: GameScene,
+  input: { activePointers: 4 },
+  disableContextMenu: true,
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }
 });
 </script>
