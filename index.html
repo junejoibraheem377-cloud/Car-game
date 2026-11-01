@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Highway Rush</title>
+<style>
+  html, body { margin:0; height:100%; background:#111; overflow:hidden; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+<script>
+const W = 400, H = 700;
+const LANES = 4;
+const ROAD_W = 320;
+const LANE_W = ROAD_W / LANES;
+const ROAD_X = (W - ROAD_W) / 2;
+const laneX = i => ROAD_X + LANE_W * i + LANE_W / 2;
+
+// Car ki texture banana (sirf ek dafa)
+function makeCar(scene, key, color) {
+  if (scene.textures.exists(key)) return;
+  const g = scene.add.graphics();
+  g.fillStyle(color).fillRoundedRect(0, 0, 40, 70, 8);
+  g.fillStyle(0x9ad1ff).fillRect(6, 14, 28, 16);
+  g.fillRect(6, 46, 28, 12);
+  g.generateTexture(key, 40, 70);
+  g.destroy();
+}
+
+// Sadak ki texture banana (sirf ek dafa)
+function makeRoad(scene) {
+  if (scene.textures.exists("road")) return;
+  const g = scene.add.graphics();
+  g.fillStyle(0x333333).fillRect(0, 0, ROAD_W, 200);
+  g.fillStyle(0xffffff);
+  for (let i = 1; i < LANES; i++) g.fillRect(i * LANE_W - 2, 20, 4, 80);
+  g.fillRect(0, 0, 6, 200);
+  g.fillRect(ROAD_W - 6, 0, 6, 200);
+  g.generateTexture("road", ROAD_W, 200);
+  g.destroy();
+}
+
+class GameScene extends Phaser.Scene {
+  constructor() { super("Game"); }
+
+  create() {
+    this.speed = 6;
+    this.lane = 1;
+    this.score = 0;
+    this.isOver = false;
+    this.canRestart = false;
+    this.enemies = [];
+
+    makeRoad(this);
+    makeCar(this, "car", 0xe63946);
+    makeCar(this, "t0", 0x1d8cf8);
+    makeCar(this, "t1", 0xf4a261);
+    makeCar(this, "t2", 0x8d99ae);
+
+    this.cameras.main.setBackgroundColor(0x2d6a2d);
+    this.road = this.add.tileSprite(W / 2, H / 2, ROAD_W, H, "road");
+    this.car = this.add.image(laneX(this.lane), H - 120, "car");
+
+    this.scoreText = this.add.text(12, 10, "Score: 0", {
+      fontFamily: "Arial", fontSize: "24px", color: "#ffffff"
+    }).setDepth(10);
+
+    // Har 0.9 second baad ek traffic car
+    this.time.addEvent({
+      delay: 900, loop: true,
+      callback: this.spawnEnemy, callbackScope: this
+    });
+
+    // Controls
+    this.input.keyboard.on("keydown-LEFT",  () => this.moveLane(-1));
+    this.input.keyboard.on("keydown-RIGHT", () => this.moveLane(1));
+    this.input.keyboard.on("keydown-SPACE", () => this.tryRestart());
+    this.input.on("pointerdown", p => {
+      if (this.isOver) { this.tryRestart(); return; }
+      this.moveLane(p.x < this.scale.width / 2 ? -1 : 1);
+    });
+  }
+
+  moveLane(dir) {
+    if (this.isOver) return;
+    const newLane = Phaser.Math.Clamp(this.lane + dir, 0, LANES - 1);
+    if (newLane === this.lane) return;
+    this.lane = newLane;
+    this.tweens.add({ targets: this.car, x: laneX(newLane), duration: 120 });
+  }
+
+  spawnEnemy() {
+    if (this.isOver) return;
+    const lane = Phaser.Math.Between(0, LANES - 1);
+    // Agar usi lane mein upar pehle se car ho to skip
+    if (this.enemies.some(e => e.lane === lane && e.y < 200)) return;
+    const key = Phaser.Utils.Array.GetRandom(["t0", "t1", "t2"]);
+    const e = this.add.image(laneX(lane), -60, key);
+    e.lane = lane;
+    this.enemies.push(e);
+  }
+
+  crash() {
+    this.isOver = true;
+    this.cameras.main.shake(300, 0.01);
+    const style = { fontFamily: "Arial", color: "#ffffff", align: "center" };
+    this.add.text(W / 2, H / 2 - 40, "GAME OVER", { ...style, fontSize: "44px" })
+      .setOrigin(0.5).setDepth(10);
+    this.add.text(W / 2, H / 2 + 20, "Score: " + this.score, { ...style, fontSize: "28px" })
+      .setOrigin(0.5).setDepth(10);
+    this.add.text(W / 2, H / 2 + 70, "Tap karo dobara khelne ke liye", { ...style, fontSize: "20px" })
+      .setOrigin(0.5).setDepth(10);
+    this.time.delayedCall(600, () => { this.canRestart = true; });
+  }
+
+  tryRestart() {
+    if (this.isOver && this.canRestart) this.scene.restart();
+  }
+
+  update() {
+    if (this.isOver) return;
+    this.road.tilePositionY -= this.speed;
+
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
+      e.y += this.speed - 2; // traffic dheere chalta hai
+
+      // Takkar check
+      if (Math.abs(e.x - this.car.x) < 34 && Math.abs(e.y - this.car.y) < 64) {
+        this.crash();
+        return;
+      }
+
+      // Car peeche nikal gayi: score barhao
+      if (e.y > H + 80) {
+        e.destroy();
+        this.enemies.splice(i, 1);
+        this.score += 10;
+        this.scoreText.setText("Score: " + this.score);
+      }
+    }
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W,
+  height: H,
+  scene: GameScene,
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }
+});
+</script>
+</body>
+</html>
